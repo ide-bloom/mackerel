@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.venv/
+venv/
+
+# Simulation output (only curated showcase files live in docs/media/)
+outputs/
+*.mp4
+*.gif
+!docs/media/*.gif
+!docs/media/*.mp4
+!docs/media/*.png
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
