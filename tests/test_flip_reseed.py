@@ -1,4 +1,4 @@
-"""Task 6 regressions for conservative paired reseeding of the PIC/FLIP liquid."""
+"""Regressions for conservative paired reseeding of the PIC/FLIP liquid."""
 
 from __future__ import annotations
 

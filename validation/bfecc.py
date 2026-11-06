@@ -1,4 +1,4 @@
-"""Task 1 BFECC investigation and regression evidence.
+"""BFECC investigation and regression evidence.
 
 The production bug was a swapped staggered-grid offset in the final BFECC ``v`` sweep:
 it sampled with the ``u`` offsets ``(-h,-h/2)`` instead of ``(-h/2,-h)``.  This driver keeps

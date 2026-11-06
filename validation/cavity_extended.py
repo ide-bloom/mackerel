@@ -1,4 +1,4 @@
-"""Task 4: Re=1000 and fully budgeted 128² Re=400 cavity comparisons.
+"""Re=1000 and fully budgeted 128² Re=400 cavity comparisons.
 
 The reference values are the unchanged Ghia--Ghia--Shin tables.  The default cases are
 Re=1000 on 64² and Re=400 on 128², both with dt=.01 and a 2000-iteration pressure cap.

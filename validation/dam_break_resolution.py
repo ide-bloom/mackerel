@@ -1,4 +1,4 @@
-"""Task 5: two-resolution dam-break comparison with an explicit gate-time convention.
+"""Two-resolution dam-break comparison with an explicit gate-time convention.
 
 Both PIC and 95% FLIP are run at 48x36 and 96x72.  The initial column width is a=.25,
 height=2a, gravity=9.81, and tau=t*sqrt(2g/a).  Time zero is instantaneous release;
