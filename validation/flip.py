@@ -77,11 +77,62 @@ def _record(water: FreeSurfaceWater) -> dict[str, float]:
     }
 
 
+def water_config(dt: float, pic_blend: float, reseed: bool = False,
+                 reseed_config: dict[str, Any] | None = None) -> WaterConfig:
+    """The dam-break/slosh configuration, with optional paired reseeding switched on."""
+    extra = dict(reseed_config or {})
+    extra.pop("reseed", None)
+    return WaterConfig(
+        dt=dt, pic_blend=pic_blend, gravity=GRAVITY,
+        pressure_tol=1e-8, pressure_maxiter=1200, reseed=reseed, **extra,
+    )
+
+
+def density_snapshot(water: FreeSurfaceWater) -> dict[str, float]:
+    """Density metrics plus a deficit breakdown, all on the current particle state."""
+    snapshot = water.density_metrics()
+    snapshot.update(water.interior_deficits())
+    snapshot["particles"] = float(len(water.particles))
+    snapshot["volume"] = water.water_volume()
+    return snapshot
+
+
+def reseed_summary(water: FreeSurfaceWater) -> dict[str, float] | None:
+    """Aggregate the reseeding events of one run; ``None`` when reseeding was off."""
+    if not water.config.reseed:
+        return None
+    events = water.reseed_history
+    active = [event for event in events if event["moved"] > 0]
+    moved = float(sum(event["moved"] for event in active))
+    return {
+        "events": float(len(events)),
+        "active_events": float(len(active)),
+        "moved": moved,
+        "moved_fraction_of_final": moved / max(float(len(water.particles)), 1.0),
+        "max_move_distance_over_h": float(
+            max(event["max_move_distance"] for event in active)
+        ) / water.grid.h if active else 0.0,
+        "mean_move_distance_over_h": float(
+            np.mean([event["mean_move_distance"] for event in active])
+        ) / water.grid.h if active else 0.0,
+        "mean_moved_speed": float(
+            np.average([event["mean_moved_speed"] for event in active],
+                       weights=[event["moved"] for event in active])
+        ) if active else 0.0,
+        "mean_keep_probability": float(
+            np.mean([event["keep_probability"] for event in active])
+        ) if active else 1.0,
+        "unfilled_slots": float(sum(event.get("unfilled_slots", 0.0) for event in events)),
+    }
+
+
 def run_dam_break(
     n: int = 48,
     end_tau: float = 2.96,
     dt: float = 0.0005,
     pic_blend: float = 0.05,
+    reseed: bool = False,
+    reseed_config: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Run one instantaneous-release dam break and return raw series and measurements."""
     if n % 4:
@@ -89,12 +140,9 @@ def run_dam_break(
     grid = Grid(n, 3 * n // 4, lx=1.0)
     particles = dam_break_particles(grid, width=WIDTH, height=2.0 * WIDTH)
     water = FreeSurfaceWater(
-        grid, particles,
-        config=WaterConfig(
-            dt=dt, pic_blend=pic_blend, gravity=GRAVITY,
-            pressure_tol=1e-8, pressure_maxiter=1200,
-        ),
+        grid, particles, config=water_config(dt, pic_blend, reseed, reseed_config),
     )
+    initial_density = density_snapshot(water)
     end_time = end_tau / TAU_SCALE
     records = [_record(water)]
     frames: list[RGBArray] = [_particle_rgb(water)]
@@ -130,6 +178,12 @@ def run_dam_break(
         "volume_relative_error": abs(records[-1]["volume"] - records[0]["volume"]) / records[0]["volume"],
         "max_divergence": max(r["divergence"] for r in records),
         "final_divergence": records[-1]["divergence"],
+        "reseed": bool(reseed),
+        "reseed_config": dict(reseed_config or {}) if reseed else None,
+        "initial_density": initial_density,
+        "final_density": density_snapshot(water),
+        "final_deficits": water.interior_deficits(),
+        "reseed_summary": reseed_summary(water),
         "reference_count": int(np.count_nonzero(valid)),
         "front_rmse": float(np.sqrt(np.mean(errors**2))),
         "front_max_abs_error": float(np.max(np.abs(errors))),
@@ -144,7 +198,13 @@ def run_dam_break(
     }
 
 
-def make_demo(kind: str, n: int = 40, dt: float = 0.0005) -> FreeSurfaceWater:
+def make_demo(
+    kind: str,
+    n: int = 40,
+    dt: float = 0.0005,
+    reseed: bool = False,
+    reseed_config: dict[str, Any] | None = None,
+) -> FreeSurfaceWater:
     """Create the splash or tilted-water sloshing initial condition."""
     if n % 4:
         raise ValueError("n must be divisible by four")
@@ -160,12 +220,9 @@ def make_demo(kind: str, n: int = 40, dt: float = 0.0005) -> FreeSurfaceWater:
     else:
         raise ValueError(f"unknown water demo {kind!r}")
     particles = ParticleSet.from_region(grid, region, particles_per_cell=4, seed=7)
-    water = FreeSurfaceWater(
-        grid, particles,
-        config=WaterConfig(dt=dt, pic_blend=0.05, gravity=GRAVITY,
-                           pressure_tol=1e-8, pressure_maxiter=1200),
+    return FreeSurfaceWater(
+        grid, particles, config=water_config(dt, 0.05, reseed, reseed_config)
     )
-    return water
 
 
 def run_demo(kind: str, n: int = 40, end_time: float = 0.8, dt: float = 0.0005) -> dict[str, Any]:
