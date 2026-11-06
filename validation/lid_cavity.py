@@ -88,10 +88,17 @@ def run_cavity(
     )
     previous = sim.u.copy()
     t0 = time.perf_counter()
+    change = float("nan")
+    converged = False
+    pressure_iterations_max = 0
+    pressure_residual_max = 0.0
     while sim.time < max_time - 1e-12:
-        sim.run_steps(100)
+        infos = sim.run_steps(100)
+        pressure_iterations_max = max(pressure_iterations_max, max(i.pressure_iterations for i in infos))
+        pressure_residual_max = max(pressure_residual_max, max(i.pressure_residual for i in infos))
         change = float(np.max(np.abs(sim.u - previous)))
         if change < 2e-8:
+            converged = True
             break
         previous = sim.u.copy()
     y_u, u_line, x_v, v_line = centreline_profiles(sim)
@@ -116,6 +123,12 @@ def run_cavity(
         "time": float(sim.time),
         "steps": len(sim.history),
         "wall_time": time.perf_counter() - t0,
+        "max_time": max_time,
+        "converged": converged,
+        "steady_change": float(change),
+        "pressure_maxiter": sim.config.pressure_maxiter,
+        "pressure_iterations_max": pressure_iterations_max,
+        "pressure_residual_max": pressure_residual_max,
         "energy": sim.energy(),
         "max_divergence": float(max((d.div_max for d in sim.history), default=0.0)),
         "u_max_error": float(np.max(np.abs(eu[primary_u]))),
