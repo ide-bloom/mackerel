@@ -180,7 +180,10 @@ Then `u_old(x_d)` is evaluated by bilinear interpolation. Details that matter:
   numerical diffusion — not physical viscosity. Measured in Milestone 2
   (`mackerel validate advection`) and reduced with MacCormack/BFECC, which advect forward
   and backward once and use the difference as an error estimate, then clamp the correction
-  so no new maxima or minima appear (a limiter).
+  so no new maxima or minima appear (a limiter). Every sweep of a staggered component must
+  retain that component's offsets. In the M4 BFECC investigation, using the `u` offsets for
+  the final `v` sweep caused a measured `-22.9431%` full-solver energy error; restoring
+  `(-h/2,-h)` reduced it to `-0.8560%` under the same 64², `ν=.01`, `dt=.0025`, `t=.2` run.
 
 ---
 
