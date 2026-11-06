@@ -1,0 +1,55 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mackerel"
+version = "1.0.0"
+description = "A fluid simulation lab: validated solvers in Python, real-time in the browser"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.11"
+dependencies = [
+    "numpy>=1.26",
+    "scipy>=1.11",
+    "matplotlib>=3.8",
+    "pillow>=10",
+]
+
+[project.optional-dependencies]
+numba = ["numba>=0.59"]
+dev = ["pytest>=8", "mypy>=1.8", "ruff>=0.3"]
+
+[project.scripts]
+mackerel = "mackerel.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "slow: long-running numerical tests",
+]
+
+[tool.mypy]
+strict = true
+files = ["src/mackerel", "tests", "validation"]
+warn_unreachable = true
+plugins = []
+
+[[tool.mypy.overrides]]
+module = ["numba.*", "matplotlib.*"]
+ignore_missing_imports = true
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["src"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "C4", "SIM", "NPY", "RUF"]
+ignore = ["E501"]
+
+[tool.ruff.lint.per-file-ignores]
+"docs/*" = ["ALL"]
