@@ -28,6 +28,7 @@ VALIDATION_SCRIPTS = {
     "moving": "validation.moving",
     "flip": "validation.flip",
     "flip_reseed": "validation.flip_reseed",
+    "showcase": "validation.showcase",
     "performance": "validation.performance",
     "webtest": "validation.web_reference",
     "figures": "validation.figures",

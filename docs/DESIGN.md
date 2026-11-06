@@ -459,3 +459,50 @@ directory rather than an installed package, so the command needs the repository 
 `python -m validation.flip_reseed` from the repository root. This is a pre-existing
 repository-layout property, not something introduced here; both forms are recorded so the new
 driver is reproducible.
+
+---
+
+## D38 (Task 7) — README media are generated, whitelisted and documented
+
+**Ambiguity.** `.gitignore` already reserved `docs/media/` with `!docs/media/*.gif` exceptions,
+but the directory did not exist and the README had no images, so it was unclear whether media
+was meant to be tracked at all or only produced into `outputs/`.
+
+**Choice.** Track a small curated set and generate it with one script,
+`validation/showcase.py` (`python -m validation.showcase`, about 40 s). It writes
+`hero.png`, `dam_break`, `sloshing`, `splash`, `smoke` and `taylor_green` GIFs plus
+`showcase.json`, which records grid, time step, frame count, particle count, end time and the
+measured maximum divergence for every case.
+
+**Why.** The repository's claim is that its numbers can be reproduced; a picture of a solver
+that no committed code produces would undercut that. Media is limited to six files (829 KB
+total) because Git stores every version of a binary forever, and `outputs/` stays gitignored so
+the large validation artifacts are not duplicated into history.
+
+**Rendering conventions.** Liquid frames show *particle occupancy*: a bright rim marks a liquid
+cell with fewer than four liquid four-neighbours (the free surface), the body shading is
+particles per cell, and everything else is a clearly empty dark box. The stair-stepped
+interface is therefore an honest depiction of a cell-scale free surface, not a rendering
+artefact, and the README says so. Vorticity frames use a fixed colour range per scene so frames
+within a GIF stay comparable; the solid body is drawn dark rather than transparent.
+
+**Deliberate exclusions.** The cylinder wake was tried and dropped: at the preview grid the
+shedding is not resolved, so the wake is steady and a GIF of it looks like a still, which would
+misrepresent the case. The M6 blockage study keeps that measurement (`docs/milestones/M6.md`).
+Sloshing is kept even though it is visually calm because it is one of the M7 demo cases.
+
+---
+
+## D39 (Task 7) — The plume GIF recorded a single frame
+
+**Defect.** `validation/smoke.py` decided when to capture a frame with
+`state.time - times[-2] >= 0.049`, but `times` gets an entry on *every* step, so `times[-2]` is
+always one time step back. The gap was therefore `dt=0.005`, never `0.049`, and the
+`len(frames) < 80` cap was hit immediately: `outputs` and `mackerel run smoke` produced a
+one-frame "animation" for every M6 report.
+
+**Fix.** Capture decisions now compare against `frame_times[-1]`, the last *captured* time, and
+`frame_times` is returned. A 0.3 s, `dt=0.005` run records 60 frames instead of 1, and
+`tests/test_showcase.py` asserts more than five frames with a spacing above 0.04 s so the bug
+cannot return silently. No physical result changes: the recorded scalar diagnostics
+(`times`, `mass`, `centre_y`) were always per step and are untouched.
