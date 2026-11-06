@@ -1,0 +1,22 @@
+# Martin & Moyce (1952), Part IV, Philosophical Transactions of the Royal Society A 244(882), 312--324.
+# DOI: 10.1098/rsta.1952.0006
+# Digitised 14-point front-position series transcribed from the Lethe dam-break-2d.py
+# postprocessing source (Apache-2.0 WITH LLVM-exception OR LGPL-2.1-or-later):
+# https://github.com/chaos-polymtl/lethe/blob/master/examples/multiphysics/dam-break/dam-break-2d.py
+# tau = t*sqrt(2*g/a), delta = x_front/a; a is the initial column width.
+# The source's optional +0.175 gate-opening correction is NOT included here.
+tau,delta
+0.00,1.00
+0.41,1.11
+0.84,1.23
+1.19,1.44
+1.43,1.67
+1.63,1.89
+1.82,2.11
+1.97,2.33
+2.20,2.56
+2.32,2.78
+2.50,3.00
+2.64,3.22
+2.82,3.44
+2.96,3.67

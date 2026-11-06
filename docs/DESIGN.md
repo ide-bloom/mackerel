@@ -1,0 +1,342 @@
+# Design decisions, assumptions and deviations
+
+This file records **why** the code looks the way it does, and — as required by the working
+style — every ambiguity I resolved on my own (what was ambiguous, what I chose, why) and
+every deviation from the specification.
+
+Sections are appended as milestones land; each entry is dated with the milestone that
+introduced it.
+
+---
+
+## D1 (M1) — Array indexing for staggered fields
+
+**Ambiguity.** The spec fixes the shapes (`u` is `(ny, nx+1)`, `v` is `(ny+1, nx)`) but not
+whether index `i` of `u` is "the i-th cell's right face" (`i = 1..nx`) or "the i-th face"
+(`i = 0..nx`).
+
+**Choice.** Pure face indices: `u[:, i]` is the face at `x = i·h` exactly, `v[j, :]` is the
+face at `y = j·h` exactly.
+
+**Why.** It removes all off-by-one bookkeeping from the operators: `divergence` is
+`(u[:,1:] - u[:,:-1])`, boundaries are columns `0` and `-1`. Coordinate helpers
+(`Grid.u_coords()` etc.) are the single place that knows about the half-cell offsets.
+
+---
+
+## D2 (M1) — Exact divergence-free test fields come from a corner streamfunction
+
+**Ambiguity.** "Divergence of analytically and discretely divergence-free fields is ~0."
+
+**Choice.** Two different tests, because they measure different things:
+
+1. `analytic.curl_streamfunction(psi, h)` builds a MAC velocity from a streamfunction
+   sampled at **cell corners**: `u[j,i] = (psi[j+1,i] - psi[j,i])/h`,
+   `v[j,i] = -(psi[j,i+1] - psi[j,i])/h`. Taking the discrete divergence of that field
+   cancels term by term, so the result is divergence-free to *machine precision* (measured
+   `1.1e-15` on 16², `4.9e-15` on 64²). Every "should be exactly div-free" test uses this
+   construction.
+2. Sampling a *continuum* divergence-free field directly on the faces leaves a residual that
+   shrinks like `h²`. Measured orders: see `mackerel validate foundations`.
+
+**Note / honest correction.** Taylor–Green is a bad field for test 2: its centred differences
+cancel exactly, so the residual sat at `1e-14` and the fitted "order" was noise (−1.05). The
+test now uses an exponentially decaying vortex, for which the residual is genuinely `O(h²)`.
+This is recorded because the first version of the test *looked* like it passed a
+second-order check when it was actually measuring round-off.
+
+---
+
+## D3 (M1) — Ghost cells for wall boundaries: mirror about the wall value
+
+**Ambiguity.** "Make backtrace clamp at walls correctly, sampling through the padded arrays
+so wall conditions are respected, not just clamped to the first interior sample."
+
+**Choice.** `pad_velocity` adds one ghost layer with `ghost = 2·wall_value − partner`, where
+the partner is the sample one cell **inside** the wall (not the sample on the wall).
+* Tangential component: makes the interpolated velocity *at* the wall equal the wall speed
+  (zero for no-slip; lid speed for the lid). Verified in
+  `tests/test_boundary.py::test_no_slip_tangential_ghost_extinguishes_wall_velocity` and
+  `::test_moving_lid_normal_velocity_is_zero_but_tangential_is_one`.
+* Normal component: gives the odd mirror `−interior` at a wall at rest, so the interpolated
+  normal velocity on the wall is exactly zero. A backtrace that reaches the wall does not
+  carry the overshooting velocity it had one cell inside.
+
+`OUTFLOW` ghosts copy the interior (zero gradient); `PERIODIC` ghosts wrap by the true period
+of the padded index space (`nx` columns / `ny` rows — *not* `nx+1`, because the periodic
+faces are stored twice; getting this wrong shifts the seam by one cell and was caught by the
+periodic-padding test).
+
+**Cost.** The padding allocates two small arrays per advection call. At 512² that is 2 MB per
+step; it is measured and reported in the Milestone 8 benchmarks rather than assumed free.
+
+---
+
+## D4 (M1) — Vorticity at corners: what happens on the boundary
+
+The corner operator `ω = (v[j,i]−v[j,i−1])/h − (u[j,i]−u[j−1,i])/h` needs a left neighbour
+for the first term and a bottom neighbour for the second. So `dv/dx` exists at corner columns
+`1..nx−1` and `du/dy` at corner rows `1..ny−1`. **Choice:** interior corners are exact;
+edge corners use the periodic wrap when that side is periodic and are left at the one-sided
+(zero) difference otherwise. Consequences: enstrophy and vorticity images use the interior
+slice `[1:-1, 1:-1]`, and wall vorticity (a genuinely one-sided quantity) is reported
+separately where it matters rather than faked by extrapolation.
+
+---
+
+## D5 (M1) — `ly` is derived, never passed
+
+`Grid(nx, ny, lx)` fixes square cells `h = lx/nx` and therefore `ly = ny·h`; `ly` is a
+read-only property. The spec fixes the constructor signature and states the relation, so a
+separate `ly` argument could only ever disagree with it.
+
+---
+
+## D6 (M1) — Scalar padding offsets
+
+`pad_scalar` returns `(ny+2, nx+2)` with `out[j+1, i+1] = field[j, i]`, so it must be sampled
+with `x0 = y0 = −h/2` (cell centres are offset by half a cell). This is documented on the
+function because the tempting `x0 = 0` silently shifts every scalar advection by half a cell
+— a bias that is invisible in a smoke plume and fatal in a convergence study.
+
+---
+
+## D7 (M1) — Video output depends on `ffmpeg`
+
+The spec asks for GIF (Pillow) and MP4 (ffmpeg on PATH, optional). `ffmpeg` is **not**
+installed in the environment this was developed in, so:
+`render.save_frames_mp4` returns `None` and writes nothing when the binary is missing, and
+every scene still writes an animated GIF. `mackerel info` reports which of the two is
+available. This is a documented optional dependency (`docs/DESIGN.md` here,
+`README.md` quick start) and no MP4 is claimed anywhere in the docs.
+
+---
+
+## D8 (M1) — Test tolerances are derived from measured error, not fitted
+
+Where a test bounds an error, the bound is an expression in `h` (e.g. energy error
+`< 4 h²`) whose coefficient is the measured one (3.3) rounded up, and the fitted convergence
+rate is asserted separately with an explicit tolerance. No test asserts an absolute error
+that was reached by tuning a parameter until it passed.
+
+---
+
+## D9 (M2) — Limiter: local 3x3 min/max clamp, not FCT
+
+**Ambiguity.** "MacCormack and/or BFECC with a limiter to reduce numerical diffusion without
+overshoot."
+
+**Choice.** After the forward/backward error correction, clamp the corrected field to the
+`[min, max]` of its own 3x3 neighbourhood (wrapped on periodic axes). BFECC clamps the
+*corrected field before the final sweep*; clamping the destination instead is unstable at
+CFL ~ 1 and was measured to explode in a single step (1e7).
+
+**Consequence, measured.** The clamp is nonlinear and per-cell, so the corrected schemes are
+**not conservative**: 100 steps of periodic translation drift the mass by +1.0% (MacCormack)
+and −1.6% (BFECC) versus 1e-14 for semi-Lagrangian. That is reported in
+`docs/milestones/M2.md` and re-measured in `mackerel validate advection` rather than papered
+over. A strict Zalesak FCT limiter would need face-based fluxes; it is listed as future work.
+
+---
+
+## D10 (M2) — "Backward sweep" means forward in time on the frozen field
+
+The MacCormack/BFECC error estimate needs a map that approximately inverts the forward
+semi-Lagrangian step. Tracing *backwards from the departure points* does not: `x -> x - dt u`
+is not an isometry, and the resulting estimate was pure noise (a one-cell sine translation
+gained a 0.76 spurious heap in one step). Implementation traces **forward** in time from the
+grid points by passing `-dt` to `backtrace` on the padded velocity, which is exact for
+uniform flow (verified: 2.5e-11) and is the standard treatment of a frozen velocity field
+over one step.
+
+---
+
+## D11 (M2) — Advection tests use rigid rotation inside no-slip walls
+
+A rotating-blob error study needs a flow whose exact solution is known, so the velocity field
+is prescribed (`analytic.solid_body_rotation`) and not solved for; the blob is placed at
+radius 0.25 from the centre so it never approaches the walls, where the prescribed rigid
+rotation would conflict with the no-slip condition.
+
+---
+
+## D13 (M3) — Divergence diagnostics exclude solid cells
+
+Inside an obstacle the velocity is whatever the no-slip data implies; its discrete divergence
+is not a property of the flow and cannot be made zero. `project._divergence_stats` therefore
+masks solid cells out, and every test that uses an obstacle asserts the divergence on cells
+whose four bounding faces are fluid (via `scipy.ndimage.binary_erosion`). Without this the
+obstacle test measures a meaningless 130 instead of the meaningful 5e-2.
+
+---
+
+## D14 (M3) — Divergence tolerance is derived from the solver tolerance
+
+The projection solves the Poisson equation to a *relative residual* `tol`. The resulting
+divergence floor is approximately `tol * max|div_input| / (dt * h)`, because
+`div(u_new) = div(u*) - dt*laplacian(p)` and the residual of the solve appears exactly there.
+At `tol = 1e-9`, `h = 1/64`, `dt = 0.1` and `max|div| = 233` that is ~2e-7 — so a test that
+demands `1e-8` is demanding better than the solver was asked to deliver. The tests use `1e-6`
+(and quote the measured value in the failure message); the spec's "stated tolerance" is the
+one in this file and in `docs/VALIDATION.md`, not a number picked to look good.
+
+---
+
+## D15 (M3) — Jacobi and Gauss-Seidel are reported as not converging
+
+On 64² and above, Jacobi and Gauss-Seidel do not reach `tol = 1e-8` within the 4000-sweep
+budget used by `mackerel validate projection`. They are reported with a `*` marker and their
+"time slope" is annotated as meaningless for accuracy purposes. The spec asks to "measure
+iterations-to-converge and wall time per solver across grid sizes, and report only what is
+actually measured" — this is that.
+
+---
+
+## D16 (M3) — Multigrid: sparse Galerkin hierarchy, `lsqr` at the coarsest level
+
+Two choices that the first implementation got wrong and that are worth recording because
+they are the standard traps:
+
+1. **Coarse operators must be Galerkin (`A_c = R A P`).** Re-discretising the PDE on a grid of
+   half the spacing is cheaper to write and *looks* right, but the coarse-grid truncation
+   error is not in the range of the prolongation, so the V-cycle stalls at a residual floor
+   (measured 2.6e-3 relative) instead of converging.
+2. **The coarsest level must be solved, not smoothed.** A few dozen Jacobi sweeps on the
+   coarsest grid leaves low-frequency error behind; solving it directly (or with `lsqr` when
+   the coarse operator inherits the pure-Neumann singularity) is what gives a grid-independent
+   convergence factor.
+
+The measured factor is ≈0.08 per V-cycle with 2 pre- and 2 post-smooths at `ω = 0.8`.
+
+---
+
+## D17 (M4) — Implicit diffusion uses eliminated Dirichlet values, not pinned unknowns
+
+A wall-normal MAC face is prescribed data. Including it as a CG unknown with an identity row
+while leaving its neighbours' couplings in place makes the matrix nonsymmetric. The diffusion
+system instead zeros prescribed entries in the operator, applies CG in the free subspace, and
+moves `α u_wall` to the right-hand side of each neighbouring row. Tangential no-slip walls use
+the ghost relation `u_ghost = 2u_wall-u_inside`; the resulting edge diagonal is `1+5α` (not
+`1+4α`) and the source is `+2αu_wall`. Direct comparisons with an explicitly padded Laplacian
+are used to check all of these signs.
+
+## D18 (M4) — Scalar diffusivity is independent of velocity viscosity
+
+The first integration draft placed scalar diffusion inside `if nu > 0`, which incorrectly
+made dye in an inviscid fluid undiffusible. The stages are now independent: `nu` controls
+velocity diffusion and `scalar_diffusivity` controls every registered scalar. The scalar is
+temperature-like for buoyancy, so positive anomalies accelerate upward (`+gβ(T-mean(T))`).
+
+## D19 (M4) — BFECC velocity correction follows the scalar BFECC definition
+
+The velocity BFECC path initially applied the error correction to the forward result and then
+advected it again. That is not BFECC: the correction must be applied to the *old* field,
+`φ_c = φ^n + (φ^n-A^R Aφ^n)/2`, followed by `Aφ_c`. The implementation now mirrors the scalar
+algorithm and retains its local limiter. On the nonlinear Taylor–Green velocity experiment,
+MacCormack is more accurate than BFECC; this measured result is reported rather than hidden.
+
+## D20 (M4) — Automatic time steps have a cell-crossing cap and final-time clamping
+
+With a nearly resting fluid, `cfl*h/max|u|` can be thousands of time units, which is a poor
+choice for an explicit body force. Automatic steps are capped at `h` (a deterministic
+cell-crossing time); a fixed `dt` remains available for accuracy studies. `run_until` clamps
+its last step to the requested end time. This is a time-integration control choice, not a
+claim that the CFL limit is a stability requirement for semi-Lagrangian advection.
+
+---
+
+## D21 (M5) — Ghia comparison uses centreline interpolation and a documented outlier rule
+
+The cavity reference is a table, not a field sampled at MAC locations. The validation script
+averages the two centre-adjacent cell columns/rows, interpolates to the published stations,
+and inserts exact wall endpoints. All 17 values per profile and Reynolds number are stored in
+`validation/data/ghia_1982.csv` with the original citation. The Re=400 `v(.9063)` datum is
+retained in `*_all` metrics but excluded from the primary metric because the cited
+transcription and independent benchmark discussions identify it as an isolated anomaly.
+This exception is deliberately narrow and visible in the printed output.
+
+## D22 (M5) — Cavity pressure iteration cap follows measured convergence
+
+A 400-iteration cap is enough at 64² but can truncate CG at 128², leaving a divergence floor
+of `6.6e-5` in a Re=400 run. The cavity driver now allows 2000 iterations and records the
+maximum divergence over the run. This is a solver-budget correction, not a relaxation of the
+pressure tolerance; the tolerance remains `1e-8`.
+
+---
+
+## D23 (M6) — Staircase immersed boundaries share one mask across all stages
+
+`obstacles.circle_mask`/`box_mask` mark cell centres; `solid_face_masks` marks every touching
+MAC face. The mask is used by the Poisson system and by the simulation before and after
+advection, diffusion and projection. Moving obstacles call `set_solid`, which invalidates the
+cached pressure hierarchy. This is intentionally a staircase immersed-boundary method, not a
+smooth body-fitted cylinder; wake numbers are reported with that limitation.
+
+## D24 (M6) — OUTFLOW requires zero-gradient velocity but Dirichlet pressure
+
+Two independent bugs were found by the cylinder test. Diffusion must not pin an outflow normal
+velocity to zero: it is an unknown with a zero-gradient stencil, while INFLOW and wall normal
+faces are prescribed. Conversely, the pressure gradient at an outflow is not zero; it uses
+`p=0` outside. The diffusion system now has independent low/high side modes, and projection
+fills the one-sided outflow pressure differences. A regression test checks that an initially
+unit outflow remains open and divergence-free.
+
+## D25 (M6) — Free-slip padding copies tangential values
+
+Free-slip means zero normal velocity and zero tangential normal derivative. The padded
+velocity used for backtracing now reflects the normal component and copies the tangential
+component. No-slip continues to use `2u_wall-u_inside`; treating the two wall kinds alike had
+made free-slip behave like no-slip during advection.
+
+## D26 (M6) — Strouhal is measured after a transient, with confinement recorded
+
+The cylinder driver uses a small deterministic asymmetric initial perturbation only to select
+a shedding phase; there is no periodic forcing. Peak-to-peak and FFT estimates are computed
+from a downstream transverse-velocity probe after 35% of the run. The 2x1 domain has 16%
+blockage, so its `St=.20388` at Re=100 is not silently substituted for the unconfined
+reference relation `.164335`; both are printed with the geometry and sampling details.
+
+---
+
+## D27 (M7) — Air pressure is Dirichlet, not obstacle Neumann
+
+The existing masked pressure operator was designed for solid cells, where a missing coupling
+is the discrete zero-normal-pressure-gradient condition. Free-surface air needs a different
+operator: `free_surface=True` treats the mask as air, adds a diagonal term at every mixed
+liquid–air face for exterior `p=0`, and returns zero air pressure. Pressure corrections are
+restricted to faces touching liquid. A regression checks both the diagonal difference and the
+liquid divergence, preventing an accidental reuse of the obstacle treatment.
+
+## D28 (M7) — Clamp interpolation coordinates and weights together
+
+MAC `u` and `v` samples have different half-cell offsets. Near a wall, clipping only the
+lower interpolation index leaves a negative or greater-than-one fractional weight. The
+particle kernels now clamp both indices and fractions, preserving a nonnegative partition of
+unity. This fixed the early dam-break blow-up without adding artificial viscosity or changing
+the pressure tolerance. NumPy and Numba implement the same four-corner operation.
+
+## D29 (M7) — PIC/FLIP blend and nominal volume are explicit diagnostics
+
+`WaterConfig.pic_blend` is the PIC fraction, so `.05` means 95% FLIP. The default adaptive
+step is capped by both `dt_max` and `.5*h/max|u_particle|`; explicit steps and final-time
+clamping remain available. Closed walls never delete particles. `water_volume()` therefore
+reports nominal particle volume, and the reports call it nominal rather than claiming VOF
+mass conservation. PIC and FLIP are run independently and their different front errors are
+both saved.
+
+## D30 (M7) — Optional Numba is an equivalence-checked transfer backend
+
+The base solver remains NumPy. Selecting `transfer_backend='numba'` lazily compiles a serial
+kernel; serial updates avoid races on shared MAC faces and make accumulation deterministic.
+The performance driver checks `u` and `v` transfer arrays and complete particle trajectories
+against NumPy, warms JIT before timing, and reports transfer and whole-step speedups separately.
+A missing optional Numba installation produces an explicit unavailable report, not a failed
+NumPy simulation.
+
+## D31 (M7) — Reference normalization and front conventions are versioned with the data
+
+The Martin–Moyce CSV records the DOI, the secondary Lethe digitisation URL, and the exact
+`tau=t*sqrt(2g/a)`, `delta=x_front/a` definitions. Lethe's separate `+0.175` gate-opening
+correction is not silently applied to instantaneous release. The driver includes its initial
+half-cell front offset in the error metrics and retains all raw series, so a future interface
+threshold or resolution study can be compared without rewriting the reference data.
