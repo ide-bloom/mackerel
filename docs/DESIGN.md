@@ -340,3 +340,122 @@ The Martin–Moyce CSV records the DOI, the secondary Lethe digitisation URL, an
 correction is not silently applied to instantaneous release. The driver includes its initial
 half-cell front offset in the error metrics and retains all raw series, so a future interface
 threshold or resolution study can be compared without rewriting the reference data.
+
+
+---
+
+## D32 (Task 1) — BFECC component offsets are checked with a legacy control
+
+The BFECC velocity implementation had a `v`-only final-sweep offset error: it sampled the
+padded `v` array with the `u` coordinates. This is a staggered-grid indexing bug, not a
+boundary-condition or correction-sign theory. The fixed solver uses `(-h/2,-h)` for that
+sweep. `validation/bfecc.py` retains the old operation only as a labelled control and measures
+limiter on/off, old versus advected reverse trajectories, and the opposite correction sign.
+At 64², `ν=.01`, `dt=.0025`, `t=.2`, the legacy/corrected relative energy errors are
+`-22.9431%/-0.8560%`; limiter-off is `-0.7849%`, old-reverse is `-0.8585%`, and wrong-sign is
+`-16.7659%`. No parameter was tuned to obtain these controls. The investigation assumes the
+same periodic Taylor–Green initial condition and pressure/diffusion stages in every case.
+
+---
+
+## D33 (Task 2) — Convergence studies separate analytic spatial and temporal errors
+
+The spatial convergence driver fixes `dt=6.25e-5` and `t=.05` before running 32²/64²/128²;
+its primary metric is analytic velocity L2, not a signed energy difference near zero. The
+temporal study fixes 128² and `t=.2` over `dt=.004/.002/.001/.0005`. Both use MacCormack,
+`ν=.01`, and pressure tolerance `1e-9`. The measured orders are `1.79945` spatial velocity,
+`1.01100` temporal energy, and `0.97163` temporal velocity. The spatial energy fit is retained
+with its sign-change warning rather than used as the headline order.
+
+A validation-only Strang P/2–D/2–A–D/2–P/2 control assumes no forces, scalars or obstacles.
+It gives `1.01884` temporal energy order and slightly larger errors than Lie at 64², so no
+second-order production splitting is claimed or enabled. These choices and the initial MAC
+quadrature convention are recorded so future refinements do not accidentally compare unlike
+error norms.
+
+---
+
+## D34 (Task 3) — Blockage comparisons report resolution and missing shedding honestly
+
+New cylinder cases use a 4×1 channel, `U=1`, `Re=100`, `dt=.005`, a geometry-scaled
+deterministic perturbation, and probe `(1.5,.5)`. The .08 coarse/fine grids are 128×32 and
+256×64; the .04 grids are 256×64 and 320×80. The last case uses `t=12`, while the other new
+cases use `t=20`; these windows are not silently interchangeable. A signal with no measured
+peaks is recorded as `St=null`, never as zero. The completed fine cases give `.152988` at
+D/H=.08 and `.120548` at D/H=.04, so the reference gap is reduced for .08 but not closed for
+.04. Cells/D and maximum divergence are retained because coarse small cylinders can suppress
+shedding numerically. The reference relation is unconfined context, not a fitting target.
+
+---
+
+## D35 (Task 4) — Extended cavity runs have explicit steady and pressure budgets
+
+The extended cavity cases use the unchanged Ghia tables, MacCormack, `dt=.01`, pressure
+tolerance `1e-8`, and a 2000-iteration cap. Re=1000 is documented on 64² with a 200-time-unit
+safety limit; Re=400 is run on 128² with a 100-unit limit. Steady convergence means the maximum
+u change over a 100-step batch is below `2e-8`; the driver records both the Boolean and the
+final change. Re=1000 converged at `t=145`, and Re=400 at `t=63`, with maximum pressure
+iterations 243 and 483 respectively. Primary Re=400 v errors exclude exactly the cited
+`x=.9063` outlier; all-point metrics and the raw numerical/reference values remain visible.
+
+---
+
+## D36 (Task 5) — Dam-break refinement retains the zero-delay convention and failed trend
+
+The second-resolution driver repeats both PIC and 95% FLIP at 48×36 and 96×72 with the same
+`a=.25`, `g=9.81`, `dt_max=.0005`, `end_tau=2.96`, and rightmost-particle-plus-half-cell front
+definition. `GATE_OPENING_DELAY=0` means instantaneous release at `t=0`, with no `+.175`
+shift on either simulation or Martin–Moyce data. The measured FLIP RMSE changes from
+`.0725510` to `.2564548`, while PIC changes from `.6225517` to `.0868497`; the lack of a
+uniform refinement trend is reported as a limitation. Volume-relative errors are zero for
+all four runs, and divergence maxima are retained alongside the front errors.
+
+---
+
+## D37 (Task 6) — Reseeding is a paired, local, opt-in particle exchange
+
+**Ambiguity.** "Fix the particle density" could mean creating new particles in thin regions,
+cloning a neighbour's velocity, running a full particle-remeshing/pushing pass, or moving
+existing particles. It could also mean fixing the *cell-average* density, which is a
+free-surface geometry effect, not a defect.
+
+**Choice.** A *paired exchange*: over-dense cells donate surplus particles to cells whose
+sparsity is unambiguous, and every moved particle keeps its own velocity. Concretely
+
+1. **Donors** are cells holding more than `reseed_target` particles (default: the nominal
+   `particles_per_cell`, 4). The surplus is drained one particle at a time back to the target.
+2. **Recipients** are cells whose sparsity cannot be explained by the interface: an *empty*
+   cell whose every in-domain four-neighbour holds liquid (a hole in the interior of the
+   liquid), and a cell below `min_particles_per_cell` with no exterior-air neighbour.
+   `count > 0` alone is *not* a sufficient criterion — most cells below four particles per
+   cell are free-surface fringe cells that the interface legitimately crosses, and filling
+   them pushes particles into the air region.
+3. **Pairing** is greedy nearest-donor within `reseed_radius` cells on a Morton-ordered
+   candidate list. A slot with no donor inside the radius is left unfilled and counted as
+   `unfilled_slots`; it is never filled by a long-range teleport.
+4. **Budget.** When demand exceeds supply, one seeded binomial keep probability scales every
+   recipient, so no donor is over-drained and the outcome is reproducible.
+5. **Cooldown.** A relocated particle is not eligible to donate again for `reseed_cooldown`
+   steps, which prevents a particle being shuttled between starved cells every step and
+   losing the Lagrangian history that makes FLIP low-diffusion.
+
+**Why.** The alternative (create particles) changes the particle count and therefore the
+nominal volume, contradicts the M7 conservation statement, and cannot be validated against
+the same reference series. A paired exchange conserves count, volume and the velocity
+multiset *exactly*, so any change in the answer is attributable to positions alone. Requiring
+an unambiguous recipient means reseeding can never add liquid beyond the free surface, which
+is the failure mode of naive density equalisation and was observed directly: a
+three-neighbour hole rule accepted exterior corner cells and produced a `.1198` front RMSE at
+48×36 versus `.0726` unreseeded. With full enclosure required, the same run gives `.0691`.
+
+**Deviation.** The feature is **off by default** (`WaterConfig.reseed=False`), so every
+previous M7 figure remains bit-for-bit reproducible. `validation/flip_reseed.py` is the only
+place it is enabled, and it reports the configuration it used. Measured outcomes are in
+`docs/milestones/M7.md`.
+
+**Command path.** `mackerel validate <name>` imports `validation.<name>`, which is a plain
+directory rather than an installed package, so the command needs the repository root on
+`PYTHONPATH` (`PYTHONPATH=. mackerel validate flip_reseed`) or must be run as
+`python -m validation.flip_reseed` from the repository root. This is a pre-existing
+repository-layout property, not something introduced here; both forms are recorded so the new
+driver is reproducible.
