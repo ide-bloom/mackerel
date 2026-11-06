@@ -31,6 +31,9 @@ DATA = Path(__file__).parent / "data" / "martin_moyce_1952.csv"
 GRAVITY = 9.81
 WIDTH = 0.25
 TAU_SCALE = float(np.sqrt(2.0 * GRAVITY / WIDTH))
+# Time zero is the instantaneous-release configuration.  The published experimental series
+# is compared without Lethe's optional +0.175 simulated-time gate-opening correction.
+GATE_OPENING_DELAY = 0.0
 
 
 def load_reference(path: Path = DATA) -> tuple[np.ndarray, np.ndarray]:
@@ -64,7 +67,7 @@ def _particle_rgb(water: FreeSurfaceWater, scale: int = 4) -> RGBArray:
 def _record(water: FreeSurfaceWater) -> dict[str, float]:
     return {
         "time": float(water.time),
-        "tau": float(water.time * TAU_SCALE),
+        "tau": float((water.time + GATE_OPENING_DELAY) * TAU_SCALE),
         "front": water.front_position(),
         "delta": float((water.front_position() + 0.5 * water.grid.h) / WIDTH),
         "volume": water.water_volume(),
@@ -115,6 +118,7 @@ def run_dam_break(
         "n": n,
         "grid": [grid.nx, grid.ny],
         "dt_max": dt,
+        "gate_opening_delay": GATE_OPENING_DELAY,
         "end_tau": end_tau,
         "time": water.time,
         "steps": len(water.history),

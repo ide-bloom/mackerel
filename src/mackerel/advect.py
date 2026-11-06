@@ -360,7 +360,7 @@ def advect_velocity(
             )
         upc, vpc = pad_velocity(u_corrected, v_corrected, bc)
         u_corr = np.asarray(bilinear(upc, xdu, ydu, -h, -0.5 * h, h), dtype=np.float64)
-        v_corr = np.asarray(bilinear(vpc, xdv, ydv, -h, -0.5 * h, h), dtype=np.float64)
+        v_corr = np.asarray(bilinear(vpc, xdv, ydv, -0.5 * h, -h, h), dtype=np.float64)
         if opts.limiter:
             u_corr = _clamp_to_bounds(
                 u_corr, *_local_bounds(u_corrected, 1, bc.is_x_periodic, bc.is_y_periodic)
