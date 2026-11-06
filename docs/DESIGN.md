@@ -344,7 +344,7 @@ threshold or resolution study can be compared without rewriting the reference da
 
 ---
 
-## D32 (Task 1) — BFECC component offsets are checked with a legacy control
+## D32 — BFECC component offsets are checked with a legacy control
 
 The BFECC velocity implementation had a `v`-only final-sweep offset error: it sampled the
 padded `v` array with the `u` coordinates. This is a staggered-grid indexing bug, not a
@@ -358,7 +358,7 @@ same periodic Taylor–Green initial condition and pressure/diffusion stages in 
 
 ---
 
-## D33 (Task 2) — Convergence studies separate analytic spatial and temporal errors
+## D33 — Convergence studies separate analytic spatial and temporal errors
 
 The spatial convergence driver fixes `dt=6.25e-5` and `t=.05` before running 32²/64²/128²;
 its primary metric is analytic velocity L2, not a signed energy difference near zero. The
@@ -375,7 +375,7 @@ error norms.
 
 ---
 
-## D34 (Task 3) — Blockage comparisons report resolution and missing shedding honestly
+## D34 — Blockage comparisons report resolution and missing shedding honestly
 
 New cylinder cases use a 4×1 channel, `U=1`, `Re=100`, `dt=.005`, a geometry-scaled
 deterministic perturbation, and probe `(1.5,.5)`. The .08 coarse/fine grids are 128×32 and
@@ -388,7 +388,7 @@ shedding numerically. The reference relation is unconfined context, not a fittin
 
 ---
 
-## D35 (Task 4) — Extended cavity runs have explicit steady and pressure budgets
+## D35 — Extended cavity runs have explicit steady and pressure budgets
 
 The extended cavity cases use the unchanged Ghia tables, MacCormack, `dt=.01`, pressure
 tolerance `1e-8`, and a 2000-iteration cap. Re=1000 is documented on 64² with a 200-time-unit
@@ -400,7 +400,7 @@ iterations 243 and 483 respectively. Primary Re=400 v errors exclude exactly the
 
 ---
 
-## D36 (Task 5) — Dam-break refinement retains the zero-delay convention and failed trend
+## D36 — Dam-break refinement retains the zero-delay convention and failed trend
 
 The second-resolution driver repeats both PIC and 95% FLIP at 48×36 and 96×72 with the same
 `a=.25`, `g=9.81`, `dt_max=.0005`, `end_tau=2.96`, and rightmost-particle-plus-half-cell front
@@ -412,7 +412,7 @@ all four runs, and divergence maxima are retained alongside the front errors.
 
 ---
 
-## D37 (Task 6) — Reseeding is a paired, local, opt-in particle exchange
+## D37 — Reseeding is a paired, local, opt-in particle exchange
 
 **Ambiguity.** "Fix the particle density" could mean creating new particles in thin regions,
 cloning a neighbour's velocity, running a full particle-remeshing/pushing pass, or moving
@@ -462,7 +462,7 @@ driver is reproducible.
 
 ---
 
-## D38 (Task 7) — README media are generated, whitelisted and documented
+## D38 — README media are generated, whitelisted and documented
 
 **Ambiguity.** `.gitignore` already reserved `docs/media/` with `!docs/media/*.gif` exceptions,
 but the directory did not exist and the README had no images, so it was unclear whether media
@@ -493,7 +493,7 @@ Sloshing is kept even though it is visually calm because it is one of the M7 dem
 
 ---
 
-## D39 (Task 7) — The plume GIF recorded a single frame
+## D39 — The plume GIF recorded a single frame
 
 **Defect.** `validation/smoke.py` decided when to capture a frame with
 `state.time - times[-2] >= 0.049`, but `times` gets an entry on *every* step, so `times[-2]` is

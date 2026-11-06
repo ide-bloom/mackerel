@@ -1,4 +1,4 @@
-"""Task 3: measured cylinder Strouhal response to blockage and grid resolution.
+"""Measured cylinder Strouhal response to blockage and grid resolution.
 
 The M6 baseline is a 2x1 channel with D/H=.16.  This driver uses a longer 4x1 channel for
 new cases, keeps U=1 and Re=U D/nu=100, and measures the same downstream transverse-velocity

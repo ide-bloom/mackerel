@@ -1,4 +1,4 @@
-"""Task 6: conservative paired reseeding for the PIC/FLIP free-surface liquid.
+"""Conservative paired reseeding for the PIC/FLIP free-surface liquid.
 
 Three questions are answered with measurements rather than assertions.
 
