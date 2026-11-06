@@ -1,0 +1,78 @@
+{
+  "dam_break": {
+    "file": "docs/media/dam_break.gif",
+    "frames": 29,
+    "grid": [
+      48,
+      36
+    ],
+    "steps": 1360,
+    "dt": 0.00025,
+    "end_time": 0.33999999999999025,
+    "front": 0.8705760502362528,
+    "max_divergence": 2.6236216399411205e-07,
+    "volume_relative_error": 0.0,
+    "note": "front = rightmost particle; see docs/milestones/M7.md for the reference study",
+    "wall_time": 6.004398606999985
+  },
+  "splash": {
+    "file": "docs/media/splash.gif",
+    "frames": 26,
+    "grid": [
+      64,
+      48
+    ],
+    "steps": 600,
+    "dt": 0.0005,
+    "end_time": 0.3,
+    "max_divergence": 1.5298002649100084e-06,
+    "particles": 3452,
+    "wall_time": 5.089786318999927
+  },
+  "sloshing": {
+    "file": "docs/media/sloshing.gif",
+    "frames": 29,
+    "grid": [
+      64,
+      48
+    ],
+    "steps": 840,
+    "dt": 0.0005,
+    "end_time": 0.42,
+    "max_divergence": 8.773621479329918e-08,
+    "particles": 4940,
+    "wall_time": 11.257671845000004
+  },
+  "smoke": {
+    "file": "docs/media/smoke.gif",
+    "frames": 48,
+    "grid": [
+      64,
+      64
+    ],
+    "steps": 480,
+    "end_time": 2.399999999999971,
+    "max_divergence": 4.467637371163846e-09,
+    "centre_rise": 0.4607170888122605,
+    "wall_time": 11.241431366000029
+  },
+  "taylor_green": {
+    "file": "docs/media/taylor_green.gif",
+    "frames": 13,
+    "grid": [
+      64,
+      64
+    ],
+    "steps": 480,
+    "end_time": 1.1999999999999855,
+    "nu": 0.01,
+    "final_divergence": 2.8894397985368414e-10,
+    "wall_time": 4.574493899999993
+  },
+  "hero": {
+    "file": "docs/media/hero.png",
+    "left": "splash n=96, t=0.33, 7360 particles",
+    "right": "taylor_green 64x64, t=0.15",
+    "wall_time": 11.813463326000033
+  }
+}

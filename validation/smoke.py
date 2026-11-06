@@ -54,6 +54,7 @@ def run_plume(n: int = 48, end_time: float = 4.0, dt: float = 0.005) -> dict[str
     X, Y = grid.cell_coords()
     source = (X - 0.5) ** 2 + (Y - 0.08) ** 2 < 0.065**2
     frames: list[RGBArray] = []
+    frame_times: list[float] = []
     times: list[float] = []
     masses: list[float] = []
     centres: list[float] = []
@@ -68,8 +69,12 @@ def run_plume(n: int = 48, end_time: float = 4.0, dt: float = 0.005) -> dict[str
         times.append(state.time)
         masses.append(mass)
         centres.append(centre)
-        if len(frames) < 80 and (len(times) == 1 or state.time - times[-2] >= 0.049):
+        # Compare against the last *captured* time, not the previous recorded step: every step
+        # is recorded in ``times``, so a ``times[-2]`` comparison can never accumulate 0.049 s
+        # and the GIF would silently contain a single frame.
+        if len(frames) < 80 and (not frame_times or state.time - frame_times[-1] >= 0.049):
             frames.append(_rgb(temperature))
+            frame_times.append(state.time)
 
     replenish()
     t0 = time.perf_counter()
@@ -91,6 +96,7 @@ def run_plume(n: int = 48, end_time: float = 4.0, dt: float = 0.005) -> dict[str
         "final_divergence": float(sim.history[-1].div_max),
         "max_divergence": float(max(d.div_max for d in sim.history)),
         "times": np.asarray(times),
+        "frame_times": np.asarray(frame_times),
         "mass": np.asarray(masses),
         "centre_y": np.asarray(centres),
         "temperature": sim.scalars["temperature"],
