@@ -506,3 +506,161 @@ one-frame "animation" for every M6 report.
 `tests/test_showcase.py` asserts more than five frames with a spacing above 0.04 s so the bug
 cannot return silently. No physical result changes: the recorded scalar diagnostics
 (`times`, `mass`, `centre_y`) were always per step and are untouched.
+
+---
+
+## D40 — CI enforces accuracy, not only correctness
+
+**Ambiguity.** A green test suite proves the stages compose; it does not prove the numbers are
+right. Nothing stopped a future edit from changing a stencil offset and silently moving a
+documented result.
+
+**Choice.** `.github/workflows/ci.yml` runs ruff, strict mypy and pytest, plus
+`validation/ci_subset.py`, a sub-second numerical gate with three checks. Thresholds are set
+from measured values on this repository's NumPy reference path and the margin is written next
+to each bound:
+
+| check | measured | bound in CI | margin |
+|---|---|---|---|
+| Taylor-Green 32², full split step, `t=.2`, BFECC | rel. energy error `-1.300313e-2`, `div_max 1.86e-10` | `|err| < 2.0e-2`, `div < 1e-8` | 1.5x on energy, ~50x on divergence |
+| BFECC sweep + viscosity + projection, 32² | corrected energy ratio `.984116`, legacy `.962012` | corrected in `.975..0.995`, legacy `>= .005` below | band is 4x the corrected/legacy gap |
+| PIC/FLIP water, 24×18, 40 steps | 288/288 particles, volume change `0.0`, `div_max 2.0e-9` | exact equality, `div < 1e-6` | exact for conservation, 500x on divergence |
+
+The legacy BFECC control is asserted to stay *worse*, so the gate fails both if the fix is
+reverted and if the control stops exercising the bug. The pytest matrix runs one leg without
+Numba (the reference path must not depend on it) and one with it, so the equivalence tests run
+instead of skipping. The energy bound is deliberately looser than the measured value: the
+purpose is to catch a ~23% offset bug, not to pin the 4th digit, which would fail on unrelated
+platform-level floating-point differences.
+
+**Assumption.** CI is not run by this sandbox, so the workflow is validated structurally (YAML
+parses, the gate is executed locally, and a test asserts both the commands and the measured
+margins are still present). The gate itself runs in 0.7 s locally.
+
+---
+
+## D41 — The dam-break FLIP non-convergence is a temporal error, not an ill-posed metric
+
+**Question.** FLIP front RMSE rose from `.07255` (48x36) to `.25645` (96x72) while PIC improved
+`.62255 -> .08685`. Is the ranking an artefact of the half-cell front convention?
+
+**Evidence.** `validation/dam_break_diagnosis.py` varies one switch at a time from a 95%-FLIP
+`n=96` baseline and scores seven front conventions (raw rightmost, rightmost `+ h/2`, 99th and
+99.5th percentile, last column holding 4 or 8 particles, and last column at least two cells
+deep). Measured RMSE:
+
+| case | rightmost | `+h/2` | p99 | column>=4 | thickness>=2h |
+|---|---:|---:|---:|---:|---:|
+| 48x36 | .04053 | .07255 | .13114 | .03688 | .04216 |
+| 96x72 | .23772 | .25645 | .04561 | .19984 | .20922 |
+| 144x108 | .27231 | .28490 | .06770 | .25932 | .25595 |
+| seed 1 / seed 2 (96) | .23449 / .23735 | .25325 / .25610 | | | |
+| 9 particles/cell (96) | .24489 | .26368 | | | |
+| `dt/2` (96) | .18751 | .20607 | | | |
+| `dt/4` (96) | **.09635** | **.11451** | | | |
+| PIC blend .20 (96) | .15709 | .17569 | | | |
+| pure FLIP (96) | .27066 | .28959 | | | |
+
+**What it is not.** The ranking survives six of the seven conventions: any particle-tracking
+front (rightmost, `+h/2`, both percentiles at 48, both column rules, thickness) puts 96-144 far
+above 48. So the convention is not the cause. Jitter seed changes the 96 RMSE by `<1.5%`, and
+nine particles per cell by `<3%`, so the initial sampling is not the cause either. The front is a
+smooth distribution -- the gap between the furthest and second-furthest particle is `0.3-0.6 h` --
+so a single stray particle is not driving it.
+
+**What it is.** Dominated by time-step error. At `n=96` (`dt = 5e-4, 2.5e-4, 1.25e-4`) the
+RMSE falls `.25645 -> .20607 -> .11451`, i.e. halving `dt` more than halves the error on the last
+step. At `n=144` the same first halving only moves `.28490 -> .26382`, so the time-step error is
+already less dominant there and the two grids bracket a non-zero limit. The front also
+*overshoots* the experiment progressively as the grid is refined: measured delta at `tau=2.96`
+is 3.73 / 3.99 / 4.01 for 48 / 96 / 144 against the reference 3.67, while the wall-contact time
+`tau` saturates at 2.90 for both 96 and 144 (2.44 for 48). Coarse FLIP damps the surge, and that
+extra numerical damping happens to sit closer to a slower experiment. Refining removes it, so the
+error approaches a limit set by missing physics, not by `h`. Grid refinement therefore cannot
+reduce it below that limit; only time-step refinement reduces the numerical part.
+
+**Consequence.** The milestone claim "FLIP does not converge" was too strong. Correct statement:
+the front series is grid-convergent for `PIC` and grid-converged-but-not-monotone for FLIP,
+because at the documented `dt_max` the FLIP error is dominated by time-step error whose sign
+happens to be favourable on the coarse grid. The comparison with the 1952 experiment is
+therefore **unmet** as a convergence demonstration, and is reported as such.
+
+**Side effect fixed.** Reseeding bounds were validated even with `reseed` off, so a legitimate
+9-particle-per-cell seeding was rejected by the default donor cap. Validation now runs only when
+reseeding is enabled, and `max_particles_per_cell` defaults to 16 so denser seedings are usable.
+---
+
+## D42 — Strouhal is measured with a stated window, and two axes are varied separately
+
+The M6 blockage table varied cells-per-diameter and blockage together, so it could not attribute
+the reference gap. `validation/cylinder_resolution.py` fixes one axis at a time: Study A holds
+8 cells/D and varies D/H (with `dt` scaled so `D/dt=16` and the advective CFL is `.5`), Study B
+holds D/H=.16 and refines the grid at `dt=.005`, and a dt control brackets the time step at
+8 cells/D. Every case reuses the M6 free-stream perturbation; the published M6 baseline is
+re-run with `validation/cylinder.py`'s own geometry (`x=.35` centre, absolute bump) so that the
+re-measurement is a reproduction, not an approximation of it.
+
+**Estimator.** The frequency comes from a Hann window over the second half of the run, after
+linear detrending and resampling onto a uniform grid, with a parabolic peak fit. Each case
+records the window, the number of shedding cycles in it, the frequency resolution `1/window`,
+and a first-half/second-half spread. A known tone is recovered to four decimals and `2%` noise
+or a linear drift does not move it (`tests/test_cylinder_resolution.py`). A window holding
+fewer than one cycle is reported with its cycle count rather than silently suppressed.
+
+**Round-off guard.** A probe signal below `1e-6` in amplitude is recorded with
+`strouhal: null` and its measured amplitude, never as a frequency. Without this the two
+2.56 cells/D cases reported `.0018` and `.00086` from a spectrum that is numerical round-off
+(`8.7e-9` amplitude); they shed no wake at all.
+
+**Legacy estimator kept, and its failure measured.** For cases sampled every `0.025` time units
+with `D=.16` — 32 samples per shedding cycle — the existing peak-to-peak estimator reports a
+frequency absent from the signal (`.407573` against `.204853`). `find_peaks` at a `5%`
+prominence threshold accepts both extrema of the overshoot per cycle, halving the apparent
+period; averaging the signal into four-sample bins first returns `.2057`. `validation/cylinder.py`
+is unchanged because its published number reproduces exactly, and every new case reports both
+estimators side by side so the discrepancy is visible rather than hidden. This is recorded
+because a reader comparing `.204` with `.410` deserves the measured reason, not a caveat.
+
+**Resumable cases.** Each case writes a checkpoint (velocities, clock, probe history) every time
+unit and resumes from it, because a 400×100 case is about an hour and a `t=30` one about three
+hours in this NumPy build. The 16 cells/D rung of Study B is reported **unmet** for that reason,
+with its measured cost (`2.4 s/step`), rather than silently dropped from the ladder.
+
+**Result recorded, not tuned.** Refinement raises St at both blockages and halving `dt` raises
+it too, so the `.16` gap to the unconfined relation is confinement, not resolution, and the
+`.08` agreement at 8 cells/D is a coincidence of two opposite errors. No parameter was changed
+to move a number towards `.164335`.
+
+---
+
+## D43 — The Ghia Re=400 datum is excluded on evidence internal to the published table
+
+The cavity metric excludes one printed point, `v(x=.9063) = -.23827` at Re=400. D35 recorded
+the exclusion; `validation/ghia_outlier.py` tests it. The test is the ratio of the secant slopes
+either side of the station, computed the same way for the published column and for our own
+profiles. In magnitude the reference ratios are `.697` (Re=100), `17.96` (Re=400) and `.597`
+(Re=1000); a smooth profile cannot arrive eighteen times steeper than it leaves. A monotone
+cubic through the other Re=400 stations gives `-.365673`, and our grid ladder moves from
+`-.325069` at 48² to `-.361466` at 128² — away from the printed value and towards that
+interpolation, with a kink ratio of `.38-.42` throughout. The exclusion therefore rests on the
+table's own internal inconsistency plus a convergence trend, not on a preference for our output;
+the CSV still carries the printed value and the all-point metrics still include it. The ladder
+is only about first order (`2.4×` per doubling), which is reported rather than smoothed.
+---
+
+## D44 — Re-measurement reproduces each published case exactly before it reinterprets it
+
+Before a new estimator is used to reinterpret published numbers, a case must reproduce a
+published one with its own settings. The M6 baseline was first re-run with the blockage driver's
+geometry (cylinder at `x=.5`) and returned `.189657`; run with `validation/cylinder.py`'s own
+geometry (centre `x=.35`, absolute perturbation at `(0.5,.52)`) it returns `.203728` against the
+published `.203878`. The 7%
+difference between those two runs is the sensitivity of a confined wake to obstacle placement,
+and it is why `run_case` takes `center` and `perturbation` rather than assuming one driver's
+conventions. The same convention is now reused by the resolution studies with the blockage
+geometry, so within a study every case shares it.
+
+Secant-slope kink and reinterpolation are likewise applied to the reference table and to our
+own output with one function (`validation/ghia_outlier.py::_secants`), so the comparison in D43
+is not two different measures that happen to disagree.
+

@@ -96,7 +96,7 @@ class WaterConfig:
     reseed: bool = False
     reseed_interval: int = 1
     min_particles_per_cell: int = 2
-    max_particles_per_cell: int = 8
+    max_particles_per_cell: int = 16
     reseed_target: int | None = None
     reseed_interior_only: bool = True
     reseed_radius: float = 4.0
@@ -195,16 +195,20 @@ class FreeSurfaceWater:
         # particle can be shuttled between starved cells every step, destroying the Lagrangian
         # history that makes FLIP low-diffusion in the first place.
         self._reseed_cooldown = np.zeros(len(self.particles), dtype=np.intp)
-        if self.config.reseed_interval < 1:
-            raise ValueError("reseed_interval must be positive")
-        if self.config.reseed_cooldown < 0:
-            raise ValueError("reseed_cooldown must be non-negative")
-        if self.config.reseed_radius <= 0.0:
-            raise ValueError("reseed_radius must be positive")
-        if not 1 <= self.config.min_particles_per_cell <= self.config.max_particles_per_cell:
-            raise ValueError("particle reseeding bounds must satisfy 1 <= min <= max")
-        if self.reseed_target() > self.config.max_particles_per_cell:
-            raise ValueError("reseed_target must not exceed max_particles_per_cell")
+        # These bounds only matter when reseeding is actually enabled.  Validating them
+        # unconditionally rejected legitimate configurations such as a 9-particle-per-cell
+        # seeding with the default 8-particle donor cap, even though nothing was reseeded.
+        if self.config.reseed:
+            if self.config.reseed_interval < 1:
+                raise ValueError("reseed_interval must be positive")
+            if self.config.reseed_cooldown < 0:
+                raise ValueError("reseed_cooldown must be non-negative")
+            if self.config.reseed_radius <= 0.0:
+                raise ValueError("reseed_radius must be positive")
+            if not 1 <= self.config.min_particles_per_cell <= self.config.max_particles_per_cell:
+                raise ValueError("particle reseeding bounds must satisfy 1 <= min <= max")
+            if self.reseed_target() > self.config.max_particles_per_cell:
+                raise ValueError("reseed_target must not exceed max_particles_per_cell")
 
     def reseed_target(self) -> int:
         """Density a donor cell is drained back to (``particles_per_cell`` by default)."""
