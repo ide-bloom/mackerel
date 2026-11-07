@@ -646,4 +646,21 @@ interpolation, with a kink ratio of `.38-.42` throughout. The exclusion therefor
 table's own internal inconsistency plus a convergence trend, not on a preference for our output;
 the CSV still carries the printed value and the all-point metrics still include it. The ladder
 is only about first order (`2.4×` per doubling), which is reported rather than smoothed.
+---
+
+## D44 — Re-measurement reproduces each published case exactly before it reinterprets it
+
+Before a new estimator is used to reinterpret published numbers, a case must reproduce a
+published one with its own settings. The M6 baseline was first re-run with the blockage driver's
+geometry (cylinder at `x=.5`) and returned `.189657`; run with `validation/cylinder.py`'s own
+geometry (centre `x=.35`, absolute perturbation at `(0.5,.52)`) it returns `.203728` against the
+published `.203878`. The 7%
+difference between those two runs is the sensitivity of a confined wake to obstacle placement,
+and it is why `run_case` takes `center` and `perturbation` rather than assuming one driver's
+conventions. The same convention is now reused by the resolution studies with the blockage
+geometry, so within a study every case shares it.
+
+Secant-slope kink and reinterpolation are likewise applied to the reference table and to our
+own output with one function (`validation/ghia_outlier.py::_secants`), so the comparison in D43
+is not two different measures that happen to disagree.
 
