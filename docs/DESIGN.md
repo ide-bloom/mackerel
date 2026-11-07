@@ -536,3 +536,55 @@ platform-level floating-point differences.
 **Assumption.** CI is not run by this sandbox, so the workflow is validated structurally (YAML
 parses, the gate is executed locally, and a test asserts both the commands and the measured
 margins are still present). The gate itself runs in 0.7 s locally.
+
+---
+
+## D41 — The dam-break FLIP non-convergence is a temporal error, not an ill-posed metric
+
+**Question.** FLIP front RMSE rose from `.07255` (48x36) to `.25645` (96x72) while PIC improved
+`.62255 -> .08685`. Is the ranking an artefact of the half-cell front convention?
+
+**Evidence.** `validation/dam_break_diagnosis.py` varies one switch at a time from a 95%-FLIP
+`n=96` baseline and scores seven front conventions (raw rightmost, rightmost `+ h/2`, 99th and
+99.5th percentile, last column holding 4 or 8 particles, and last column at least two cells
+deep). Measured RMSE:
+
+| case | rightmost | `+h/2` | p99 | column>=4 | thickness>=2h |
+|---|---:|---:|---:|---:|---:|
+| 48x36 | .04053 | .07255 | .13114 | .03688 | .04216 |
+| 96x72 | .23772 | .25645 | .04561 | .19984 | .20922 |
+| 144x108 | .27231 | .28490 | .06770 | .25932 | .25595 |
+| seed 1 / seed 2 (96) | .23449 / .23735 | .25325 / .25610 | | | |
+| 9 particles/cell (96) | .24489 | .26368 | | | |
+| `dt/2` (96) | .18751 | .20607 | | | |
+| `dt/4` (96) | **.09635** | **.11451** | | | |
+| PIC blend .20 (96) | .15709 | .17569 | | | |
+| pure FLIP (96) | .27066 | .28959 | | | |
+
+**What it is not.** The ranking survives six of the seven conventions: any particle-tracking
+front (rightmost, `+h/2`, both percentiles at 48, both column rules, thickness) puts 96-144 far
+above 48. So the convention is not the cause. Jitter seed changes the 96 RMSE by `<1.5%`, and
+nine particles per cell by `<3%`, so the initial sampling is not the cause either. The front is a
+smooth distribution -- the gap between the furthest and second-furthest particle is `0.3-0.6 h` --
+so a single stray particle is not driving it.
+
+**What it is.** Dominated by time-step error. At `n=96` (`dt = 5e-4, 2.5e-4, 1.25e-4`) the
+RMSE falls `.25645 -> .20607 -> .11451`, i.e. halving `dt` more than halves the error on the last
+step. At `n=144` the same first halving only moves `.28490 -> .26382`, so the time-step error is
+already less dominant there and the two grids bracket a non-zero limit. The front also
+*overshoots* the experiment progressively as the grid is refined: measured delta at `tau=2.96`
+is 3.73 / 3.99 / 4.01 for 48 / 96 / 144 against the reference 3.67, while the wall-contact time
+`tau` saturates at 2.90 for both 96 and 144 (2.44 for 48). Coarse FLIP damps the surge, and that
+extra numerical damping happens to sit closer to a slower experiment. Refining removes it, so the
+error approaches a limit set by missing physics, not by `h`. Grid refinement therefore cannot
+reduce it below that limit; only time-step refinement reduces the numerical part.
+
+**Consequence.** The milestone claim "FLIP does not converge" was too strong. Correct statement:
+the front series is grid-convergent for `PIC` and grid-converged-but-not-monotone for FLIP,
+because at the documented `dt_max` the FLIP error is dominated by time-step error whose sign
+happens to be favourable on the coarse grid. The comparison with the 1952 experiment is
+therefore **unmet** as a convergence demonstration, and is reported as such.
+
+**Side effect fixed.** Reseeding bounds were validated even with `reseed` off, so a legitimate
+9-particle-per-cell seeding was rejected by the default donor cap. Validation now runs only when
+reseeding is enabled, and `max_particles_per_cell` defaults to 16 so denser seedings are usable.

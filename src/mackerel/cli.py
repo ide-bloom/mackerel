@@ -19,6 +19,7 @@ VALIDATION_SCRIPTS = {
     "taylor_green": "validation.taylor_green",
     "bfecc": "validation.bfecc",
     "convergence": "validation.convergence",
+    "dam_break_diagnosis": "validation.dam_break_diagnosis",
     "dam_break_resolution": "validation.dam_break_resolution",
     "poiseuille": "validation.poiseuille",
     "lid_cavity": "validation.lid_cavity",
