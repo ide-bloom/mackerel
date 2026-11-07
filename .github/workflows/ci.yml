@@ -40,9 +40,9 @@ jobs:
         # skipping them.
         include:
           - python-version: "3.11"
-            extras: ""
+            extras: "dev"
           - python-version: "3.12"
-            extras: "[numba]"
+            extras: "dev,numba"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -52,7 +52,9 @@ jobs:
       - name: Install
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -e ".[dev]${{ matrix.extras }}"
+          # One bracket group only: pip rejects ".[dev][numba]" as not a valid editable
+          # requirement, which is what the 3.12 leg did before this was fixed.
+          python -m pip install -e ".[${{ matrix.extras }}]"
       - name: Pytest
         run: python -m pytest -q
 
