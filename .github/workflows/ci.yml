@@ -1,0 +1,92 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint-and-types:
+    name: ruff + mypy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e '.[dev]' scipy-stubs
+      - name: Ruff
+        run: ruff check .
+      - name: Mypy (strict)
+        run: mypy
+
+  test:
+    name: pytest
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # The reference path is NumPy, so it must pass without the optional Numba backend.
+        # The second leg installs Numba and exercises the equivalence tests instead of
+        # skipping them.
+        include:
+          - python-version: "3.11"
+            extras: ""
+          - python-version: "3.12"
+            extras: "[numba]"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev]${{ matrix.extras }}"
+      - name: Pytest
+        run: python -m pytest -q
+
+  numerical-regressions:
+    name: numerical accuracy gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e '.[dev]'
+      - name: Fast validation subset
+        # Thresholds live in validation/ci_subset.py next to the measured value and the
+        # margin. Summary of the bounds enforced (all measured on this repository's NumPy
+        # reference path, then given headroom):
+        #   Taylor-Green 32x32 full split step, t=.2:
+        #       relative energy error measured -1.3003e-2, bound |err| < 2.0e-2 (1.5x);
+        #       the legacy BFECC v-offset bug measured -2.294e-1, so it still fails.
+        #   BFECC sweep + viscosity + projection, 32x32:
+        #       corrected energy ratio measured .984116, accepted band .975..0.995;
+        #       legacy control measured .962012 and must stay >= .005 below corrected.
+        #   PIC/FLIP water, 24x18, 40 steps:
+        #       particle count and nominal volume must be exactly conserved (measured 288/288,
+        #       relative volume change 0.0); max divergence measured 2.0e-9, bound 1e-6.
+        run: python -m validation.ci_subset
+      - name: Upload the accuracy report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-subset-report
+          path: outputs/ci/ci_subset.json
+          if-no-files-found: warn

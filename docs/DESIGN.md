@@ -506,3 +506,33 @@ one-frame "animation" for every M6 report.
 `tests/test_showcase.py` asserts more than five frames with a spacing above 0.04 s so the bug
 cannot return silently. No physical result changes: the recorded scalar diagnostics
 (`times`, `mass`, `centre_y`) were always per step and are untouched.
+
+---
+
+## D40 — CI enforces accuracy, not only correctness
+
+**Ambiguity.** A green test suite proves the stages compose; it does not prove the numbers are
+right. Nothing stopped a future edit from changing a stencil offset and silently moving a
+documented result.
+
+**Choice.** `.github/workflows/ci.yml` runs ruff, strict mypy and pytest, plus
+`validation/ci_subset.py`, a sub-second numerical gate with three checks. Thresholds are set
+from measured values on this repository's NumPy reference path and the margin is written next
+to each bound:
+
+| check | measured | bound in CI | margin |
+|---|---|---|---|
+| Taylor-Green 32², full split step, `t=.2`, BFECC | rel. energy error `-1.300313e-2`, `div_max 1.86e-10` | `|err| < 2.0e-2`, `div < 1e-8` | 1.5x on energy, ~50x on divergence |
+| BFECC sweep + viscosity + projection, 32² | corrected energy ratio `.984116`, legacy `.962012` | corrected in `.975..0.995`, legacy `>= .005` below | band is 4x the corrected/legacy gap |
+| PIC/FLIP water, 24×18, 40 steps | 288/288 particles, volume change `0.0`, `div_max 2.0e-9` | exact equality, `div < 1e-6` | exact for conservation, 500x on divergence |
+
+The legacy BFECC control is asserted to stay *worse*, so the gate fails both if the fix is
+reverted and if the control stops exercising the bug. The pytest matrix runs one leg without
+Numba (the reference path must not depend on it) and one with it, so the equivalence tests run
+instead of skipping. The energy bound is deliberately looser than the measured value: the
+purpose is to catch a ~23% offset bug, not to pin the 4th digit, which would fail on unrelated
+platform-level floating-point differences.
+
+**Assumption.** CI is not run by this sandbox, so the workflow is validated structurally (YAML
+parses, the gate is executed locally, and a test asserts both the commands and the measured
+margins are still present). The gate itself runs in 0.7 s locally.

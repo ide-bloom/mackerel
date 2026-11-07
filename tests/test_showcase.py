@@ -108,3 +108,13 @@ def test_showcase_quick_mode_is_not_required_to_rerender(name: str) -> None:
 
     assert callable(showcase.main)
     assert name
+
+
+def test_ci_workflow_runs_the_accuracy_gate_and_states_its_margins() -> None:
+    """CI must keep enforcing the numerical subset, with the measured margins documented."""
+    workflow = (Path(__file__).resolve().parents[1] / ".github" / "workflows" / "ci.yml").read_text()
+    for command in ("ruff check .", "mypy", "python -m pytest", "python -m validation.ci_subset"):
+        assert command in workflow, f"CI no longer runs: {command}"
+    # Each threshold in the gate is justified next to its measured value in the workflow.
+    for measured in ("-1.3003e-2", ".984116", ".962012", "2.0e-9"):
+        assert measured in workflow, f"missing measured margin for {measured}"
