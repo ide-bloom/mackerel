@@ -25,6 +25,8 @@ VALIDATION_SCRIPTS = {
     "lid_cavity": "validation.lid_cavity",
     "cylinder": "validation.cylinder",
     "cylinder_blockage": "validation.cylinder_blockage",
+    "cylinder_resolution": "validation.cylinder_resolution",
+    "ghia_outlier": "validation.ghia_outlier",
     "smoke": "validation.smoke",
     "moving": "validation.moving",
     "flip": "validation.flip",
