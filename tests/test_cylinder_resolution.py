@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import numpy as np
 from validation.cylinder_resolution import run_case, windowed_strouhal
 
@@ -86,3 +88,35 @@ def test_short_resolution_case_records_its_geometry_and_bookkeeping() -> None:
     assert row["pressure_cap_hits"] == 0
     assert row["max_divergence"] < 1e-6
     assert row["times"].size > 0
+
+
+def test_a_checkpoint_is_resumed_instead_of_restarting(tmp_path: Path) -> None:
+    nx, ny = 32, 16
+    checkpoint = tmp_path / "case.checkpoint.npz"
+    # Write the same record the driver writes mid-run: a uniform stream, a clock and the probe
+    # history so far.  The resumed case must continue from here rather than from t=0.
+    np.savez(
+        checkpoint,
+        u=np.ones((ny, nx + 1)),
+        v=np.zeros((ny + 1, nx)),
+        time=np.float64(0.2),
+        times=np.array([0.0, 0.1, 0.2]),
+        probe=np.array([0.0, 0.0, 0.0]),
+    )
+    row = run_case(
+        "resumed",
+        nx=nx,
+        ny=ny,
+        lx=2.0,
+        diameter=0.16,
+        end_time=0.4,
+        dt=0.01,
+        checkpoint=checkpoint,
+    )
+    assert row["resumed"] is True
+    assert np.isclose(row["resumed_from_time"], 0.2)
+    assert row["steps"] == 20
+    # The probe history from before the interruption is kept and extended, not overwritten.
+    assert np.isclose(row["times"][0], 0.0)
+    assert row["sample_count"] > 3
+    assert not Path(checkpoint).exists()

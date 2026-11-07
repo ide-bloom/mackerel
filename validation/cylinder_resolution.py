@@ -51,6 +51,13 @@ REFERENCE_REYNOLDS = 100.0
 #: Probe used by every case in this study.
 PROBE = (1.5, 0.5)
 
+#: A probe signal below this amplitude (in units of U) is numerical round-off rather than a
+#: wake: a case whose probe never leaves 1e-6 cannot be carrying a measurable oscillation, and
+#: reporting a Strouhal number from its spectrum would dress noise up as a measurement.  This
+#: is a round-off guard, not a shedding criterion; the measured amplitude is reported either
+#: way so a borderline case can be judged.
+ROUND_OFF_AMPLITUDE = 1e-6
+
 
 def _peak_frequency(y: np.ndarray, dt: float, pad_factor: int = 8) -> float | None:
     """Dominant frequency of an already-unit-spaced, detrended signal."""
@@ -127,7 +134,7 @@ def windowed_strouhal(
     window = float(uniform[-1] - uniform[0])
     frequency = _peak_frequency(detrended, dt, pad_factor)
     if frequency is None or frequency <= 0.0:
-        return empty
+        return {**empty, "shedding_detected": False}
     half = detrended.size // 2
     first = _peak_frequency(detrended[:half], dt, pad_factor)
     second = _peak_frequency(detrended[half:], dt, pad_factor)
@@ -143,6 +150,7 @@ def windowed_strouhal(
     return {
         "frequency": frequency,
         "strouhal": strouhal,
+        "shedding_detected": True,
         "window_start": float(uniform[0]),
         "window": window,
         "cycles": frequency * window,
@@ -164,8 +172,11 @@ def run_case(
     diameter: float,
     end_time: float,
     dt: float,
+    center: tuple[float, float] = (0.5, 0.5),
     reynolds: float = REFERENCE_REYNOLDS,
     sample_interval: float = 0.025,
+    probe: tuple[float, float] = PROBE,
+    perturbation: str = "blockage",
     checkpoint: Path | None = None,
     checkpoint_every: float = 1.0,
 ) -> dict[str, Any]:
@@ -182,7 +193,6 @@ def run_case(
         raise ValueError("this comparison uses H=1; choose nx/lx and ny accordingly")
     speed = 1.0
     nu = speed * diameter / reynolds
-    center = (0.5, 0.5)
     solid = circle_mask(grid, center, diameter / 2.0)
     sim = Simulation.at_rest(
         grid,
@@ -210,25 +220,33 @@ def run_case(
         resumed = True
         resumed_from = sim.time
         times: list[float] = saved_times
-        probe: list[float] = saved_probe
+        history: list[float] = saved_probe
         print(f"  resuming from t={sim.time:.3f}", flush=True)
     else:
         times = []
-        probe = []
-        # Identical to the M6 blockage driver: a deterministic, geometry-scaled asymmetry picks
-        # a shedding phase.  Its amplitude is the same for every case, it forces no frequency.
+        history = []
+        # A deterministic asymmetry picks a shedding phase; it forces no frequency.  ``blockage``
+        # is the form used by validation/cylinder_blockage.py (geometry-scaled, identical for
+        # every case).  ``m6`` is the form in validation/cylinder.py, reproduced exactly so the
+        # published M6 baseline can be re-measured rather than approximated.
         X, Y = grid.cell_coords()
-        perturbation = 0.01 * np.exp(
-            -(
-                (X - (center[0] + 2.0 * diameter)) ** 2
-                + (Y - (center[1] + 0.25 * diameter)) ** 2
+        if perturbation == "m6":
+            # Exactly validation/cylinder.py: an absolute bump, not scaled by the geometry.
+            bump = 0.01 * np.exp(-((X - 0.5) ** 2 + (Y - 0.52) ** 2) / 0.01)
+        elif perturbation == "blockage":
+            bump = 0.01 * np.exp(
+                -(
+                    (X - (center[0] + 2.0 * diameter)) ** 2
+                    + (Y - (center[1] + 0.25 * diameter)) ** 2
+                )
+                / max(diameter**2, 1e-12)
             )
-            / max(diameter**2, 1e-12)
-        )
-        sim.v[1:-1, :] += 0.5 * (perturbation[:-1, :] + perturbation[1:, :])
+        else:
+            raise ValueError(f"unknown perturbation {perturbation!r}")
+        sim.v[1:-1, :] += 0.5 * (bump[:-1, :] + bump[1:, :])
         apply_velocity_bc(sim.u, sim.v, sim.bc)
         apply_solid_velocity(sim.u, sim.v, solid)
-    probe_x, probe_y = PROBE
+    probe_x, probe_y = probe
     pi = min(grid.nx - 1, int(probe_x / grid.h))
     pj = min(grid.ny - 1, int(probe_y / grid.h))
     last_checkpoint = [sim.time]
@@ -236,7 +254,7 @@ def run_case(
     def record(state: Simulation, _info: StepInfo) -> None:
         if not times or state.time - times[-1] >= sample_interval - 1e-9:
             times.append(state.time)
-            probe.append(float(grid.v_to_centers(state.v)[pj, pi]))
+            history.append(float(grid.v_to_centers(state.v)[pj, pi]))
         if checkpoint is not None and state.time - last_checkpoint[0] >= checkpoint_every:
             last_checkpoint[0] = state.time
             checkpoint.parent.mkdir(parents=True, exist_ok=True)
@@ -246,7 +264,7 @@ def run_case(
                 v=state.v,
                 time=np.float64(state.time),
                 times=np.asarray(times),
-                probe=np.asarray(probe),
+                probe=np.asarray(history),
             )
 
     started = time.perf_counter()
@@ -255,9 +273,25 @@ def run_case(
     if checkpoint is not None and checkpoint.exists():
         checkpoint.unlink()
     t = np.asarray(times)
-    y = np.asarray(probe)
+    y = np.asarray(history)
     start = 0.5 * end_time
     measurement = windowed_strouhal(t, y, diameter, speed, start)
+    if (
+        measurement["amplitude_std"] is not None
+        and measurement["amplitude_std"] < ROUND_OFF_AMPLITUDE
+    ):
+        # Keep the measured amplitude and window, drop the frequency: there is no wake here.
+        measurement.update(
+            frequency=None,
+            strouhal=None,
+            cycles=None,
+            strouhal_half_first=None,
+            strouhal_half_second=None,
+            strouhal_half_spread=None,
+            shedding_detected=False,
+        )
+    else:
+        measurement["shedding_detected"] = measurement["strouhal"] is not None
     baseline = strouhal_from_signal(t, y, diameter, speed, start)
     return {
         "name": name,
@@ -267,6 +301,8 @@ def run_case(
         "domain_height": height,
         "spacing": grid.h,
         "diameter": diameter,
+        "center_x": center[0],
+        "center_y": center[1],
         "blockage": diameter / height,
         "cells_per_diameter": diameter / grid.h,
         "reynolds": reynolds,
@@ -319,6 +355,22 @@ STUDY_B: dict[str, dict[str, Any]] = {
     "B_c16": {"nx": 400, "ny": 100, "lx": 4.0, "diameter": 0.16, "end_time": 30.0, "dt": 0.005},
 }
 
+#: The configurations already published by the M6 report, re-measured with the windowed
+#: estimator.  ``m6_baseline`` reproduces the 2x1 channel and (0.8,.5) probe of
+#: ``validation/cylinder.py``; the four blockage cases are ``validation/cylinder_blockage.py``
+#: unchanged.  These are re-measurements of published cases, not new physics.
+STUDY_M6: dict[str, dict[str, Any]] = {
+    "M6_baseline": {
+        "nx": 64, "ny": 32, "lx": 2.0, "diameter": 0.16,
+        "end_time": 30.0, "dt": 0.005, "probe": (0.8, 0.5),
+        "center": (0.35, 0.5), "perturbation": "m6",
+    },
+    "M6_08_coarse": {"nx": 128, "ny": 32, "lx": 4.0, "diameter": 0.08, "end_time": 20.0, "dt": 0.005},
+    "M6_08_fine": {"nx": 256, "ny": 64, "lx": 4.0, "diameter": 0.08, "end_time": 20.0, "dt": 0.005},
+    "M6_04": {"nx": 256, "ny": 64, "lx": 4.0, "diameter": 0.04, "end_time": 20.0, "dt": 0.005},
+    "M6_04_fine": {"nx": 320, "ny": 80, "lx": 4.0, "diameter": 0.04, "end_time": 12.0, "dt": 0.005},
+}
+
 #: Is the time step converged where the resolution study sits?  Same grid, one halving of dt
 #: in each direction around dt=0.005 at cells/D=8.
 CONTROL: dict[str, dict[str, Any]] = {
@@ -330,6 +382,15 @@ STUDIES: dict[str, dict[str, dict[str, Any]]] = {
     "a": STUDY_A,
     "b": STUDY_B,
     "control": CONTROL,
+    "m6": STUDY_M6,
+}
+
+#: x axis and annotation for each study's figure.
+STUDY_AXES: dict[str, tuple[str, str]] = {
+    "a": ("blockage", "blockage D/H"),
+    "b": ("cells_per_diameter", "cells per diameter"),
+    "control": ("dt", "time step dt"),
+    "m6": ("blockage", "blockage D/H"),
 }
 
 
@@ -382,40 +443,28 @@ def _plot(outdir: Path, study: str) -> None:
     figure, axes = plt.subplots(figsize=(7.5, 4.5), layout="constrained")
     reference = rows[0]["reference_strouhal"]
     axes.axhline(reference, color="black", ls="--", label=f"reference relation {reference:.4f}")
-    if study == "a":
-        for row in rows:
-            if row["strouhal"] is None:
-                continue
-            axes.errorbar(
-                row["blockage"],
-                row["strouhal"],
-                yerr=row["strouhal_half_spread"],
-                fmt="o",
-                capsize=3,
-                label=f"{row['name']} ({row['cells_per_diameter']:.2f} cells/D)",
-            )
-        axes.set(
-            xlabel="blockage D/H",
-            ylabel="windowed Strouhal St",
-            title="Study A: constant 8 cells/D, varying blockage",
+    field, axis_label = STUDY_AXES[study]
+    titles = {
+        "a": "Study A: 8 cells/D, varying blockage",
+        "b": "Study B: D/H=.16, varying grid",
+        "control": "dt control at D/H=.16, 8 cells/D",
+        "m6": "Published M6 cases, re-measured",
+    }
+    for row in rows:
+        if row["strouhal"] is None:
+            continue
+        axes.errorbar(
+            row[field],
+            row["strouhal"],
+            yerr=row["strouhal_half_spread"],
+            fmt="o",
+            capsize=3,
+            label=(
+                f"{row['name']} ({row['cells_per_diameter']:.2f} cells/D, "
+                f"D/dt={row['diameter_per_dt']:.0f})"
+            ),
         )
-    else:
-        for row in rows:
-            if row["strouhal"] is None:
-                continue
-            axes.errorbar(
-                row["cells_per_diameter"],
-                row["strouhal"],
-                yerr=row["strouhal_half_spread"],
-                fmt="o",
-                capsize=3,
-                label=f"{row['name']} (D/dt={row['diameter_per_dt']:.0f})",
-            )
-        axes.set(
-            xlabel="cells per diameter",
-            ylabel="windowed Strouhal St",
-            title=f"Study {study.upper()}: D/H=.16, varying grid",
-        )
+    axes.set(xlabel=axis_label, ylabel="windowed Strouhal St", title=titles[study])
     axes.grid(alpha=0.25)
     axes.legend(fontsize=8)
     figure.savefig(outdir / f"study_{study}.png", dpi=150)

@@ -588,3 +588,62 @@ therefore **unmet** as a convergence demonstration, and is reported as such.
 **Side effect fixed.** Reseeding bounds were validated even with `reseed` off, so a legitimate
 9-particle-per-cell seeding was rejected by the default donor cap. Validation now runs only when
 reseeding is enabled, and `max_particles_per_cell` defaults to 16 so denser seedings are usable.
+---
+
+## D42 — Strouhal is measured with a stated window, and two axes are varied separately
+
+The M6 blockage table varied cells-per-diameter and blockage together, so it could not attribute
+the reference gap. `validation/cylinder_resolution.py` fixes one axis at a time: Study A holds
+8 cells/D and varies D/H (with `dt` scaled so `D/dt=16` and the advective CFL is `.5`), Study B
+holds D/H=.16 and refines the grid at `dt=.005`, and a dt control brackets the time step at
+8 cells/D. Every case reuses the M6 free-stream perturbation; the published M6 baseline is
+re-run with `validation/cylinder.py`'s own geometry (`x=.35` centre, absolute bump) so that the
+re-measurement is a reproduction, not an approximation of it.
+
+**Estimator.** The frequency comes from a Hann window over the second half of the run, after
+linear detrending and resampling onto a uniform grid, with a parabolic peak fit. Each case
+records the window, the number of shedding cycles in it, the frequency resolution `1/window`,
+and a first-half/second-half spread. A known tone is recovered to four decimals and `2%` noise
+or a linear drift does not move it (`tests/test_cylinder_resolution.py`). A window holding
+fewer than one cycle is reported with its cycle count rather than silently suppressed.
+
+**Round-off guard.** A probe signal below `1e-6` in amplitude is recorded with
+`strouhal: null` and its measured amplitude, never as a frequency. Without this the two
+2.56 cells/D cases reported `.0018` and `.00086` from a spectrum that is numerical round-off
+(`8.7e-9` amplitude); they shed no wake at all.
+
+**Legacy estimator kept, and its failure measured.** For cases sampled every `0.025` time units
+with `D=.16` — 32 samples per shedding cycle — the existing peak-to-peak estimator reports a
+frequency absent from the signal (`.407573` against `.204853`). `find_peaks` at a `5%`
+prominence threshold accepts both extrema of the overshoot per cycle, halving the apparent
+period; averaging the signal into four-sample bins first returns `.2057`. `validation/cylinder.py`
+is unchanged because its published number reproduces exactly, and every new case reports both
+estimators side by side so the discrepancy is visible rather than hidden. This is recorded
+because a reader comparing `.204` with `.410` deserves the measured reason, not a caveat.
+
+**Resumable cases.** Each case writes a checkpoint (velocities, clock, probe history) every time
+unit and resumes from it, because a 400×100 case is about an hour and a `t=30` one about three
+hours in this NumPy build. The 16 cells/D rung of Study B is reported **unmet** for that reason,
+with its measured cost (`2.4 s/step`), rather than silently dropped from the ladder.
+
+**Result recorded, not tuned.** Refinement raises St at both blockages and halving `dt` raises
+it too, so the `.16` gap to the unconfined relation is confinement, not resolution, and the
+`.08` agreement at 8 cells/D is a coincidence of two opposite errors. No parameter was changed
+to move a number towards `.164335`.
+
+---
+
+## D43 — The Ghia Re=400 datum is excluded on evidence internal to the published table
+
+The cavity metric excludes one printed point, `v(x=.9063) = -.23827` at Re=400. D35 recorded
+the exclusion; `validation/ghia_outlier.py` tests it. The test is the ratio of the secant slopes
+either side of the station, computed the same way for the published column and for our own
+profiles. In magnitude the reference ratios are `.697` (Re=100), `17.96` (Re=400) and `.597`
+(Re=1000); a smooth profile cannot arrive eighteen times steeper than it leaves. A monotone
+cubic through the other Re=400 stations gives `-.365673`, and our grid ladder moves from
+`-.325069` at 48² to `-.361466` at 128² — away from the printed value and towards that
+interpolation, with a kink ratio of `.38-.42` throughout. The exclusion therefore rests on the
+table's own internal inconsistency plus a convergence trend, not on a preference for our output;
+the CSV still carries the printed value and the all-point metrics still include it. The ladder
+is only about first order (`2.4×` per doubling), which is reported rather than smoothed.
+

@@ -142,9 +142,20 @@ def grid_ladder(
     rows = []
     for n in ladder:
         cache = None if outdir is None else outdir / f"reynolds{reynolds}_n{n}.json"
-        if cache is not None and cache.exists() and not force:
+        profile = None if outdir is None else outdir / f"reynolds{reynolds}_n{n}.npz"
+        if (
+            cache is not None
+            and profile is not None
+            and cache.exists()
+            and profile.exists()
+            and not force
+        ):
             print(f"skipping n={n} (already measured; --force re-runs)", flush=True)
-            rows.append(json.loads(cache.read_text()))
+            row = json.loads(cache.read_text())
+            with np.load(profile) as saved:
+                row["x_line"] = np.asarray(saved["x_line"])
+                row["v_line"] = np.asarray(saved["v_line"])
+            rows.append(row)
             continue
         print(f"running n={n}", flush=True)
         row = run_cavity(reynolds, n=n, max_time=max_time)
@@ -175,9 +186,11 @@ def grid_ladder(
             f"max div {row['max_divergence']:.2e}, converged={row['converged']}",
             flush=True,
         )
-        if cache is not None:
-            # Bank every finished grid level so an interrupted ladder resumes where it stopped.
+        if cache is not None and profile is not None:
+            # Bank every finished grid level, profile included, so an interrupted ladder
+            # resumes where it stopped and the figure can be redrawn without re-running.
             cache.write_text(json.dumps(_serial(rows[-1]), indent=2) + "\n")
+            np.savez(profile, x_line=rows[-1]["x_line"], v_line=rows[-1]["v_line"])
     return rows
 
 
